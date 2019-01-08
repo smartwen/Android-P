@@ -28,7 +28,7 @@ public class LoginTest {
 		String password="admin123LW";
 		LoginUser.login(driver, username, password);
 		Thread.sleep(5000);
-		//��֤
+		//ÑéÖ¤
 		String text=LoginUser.login_user_info(driver);
 		Assert.assertEquals(text, username+"@126.com");
 	}
@@ -38,4 +38,5 @@ public class LoginTest {
 		LoginUser.logout(driver);
 		driver.quit();
 	}
+// 	test
 }
