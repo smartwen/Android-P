@@ -1,0 +1,162 @@
+package com.example.oneservice;
+
+import android.os.AsyncTask;
+import android.os.Environment;
+
+import com.squareup.okhttp.OkHttpClient;
+import com.squareup.okhttp.Request;
+import com.squareup.okhttp.Response;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
+
+/**
+ * Created by 15012800343 on 2019/1/24.
+ * 实现下载功能
+ * AsyncTask 1.在工作线程中执行任务，如 耗时任务
+ * 2.将工作线程的执行结果传递给主线程，从而在主线程中执行相关的UI操作，保证线程安全
+ *
+ */
+
+public class DownloadTask extends AsyncTask<String,Integer,Integer> {
+    public static final int TYPE_SUCCESS = 0;
+    public static final int TYPE_FAILED = 1;
+    public static final int TYPE_PAUSED = 2;
+    public static final int TYPE_CANCELED = 3;
+
+    private DownloadListener listener;
+    private boolean isCanceled = false;
+    private boolean isPaused = false;
+    private int lastProgress;
+
+    public DownloadTask(DownloadListener listener) {
+        this.listener = listener;
+    }
+
+    //执行具体的下载逻辑
+    // 作用：接收输入参数、执行任务中的耗时操作、返回 线程任务执行的结果
+    @Override
+    protected Integer doInBackground(String... params) {
+        InputStream is = null;
+        RandomAccessFile savedFile = null;
+        File file = null;
+        try{
+            long downloadedLength = 0;//记录已下载文件的长度
+            String downloadUrl = params[0];
+            String fileName = downloadUrl.substring(downloadUrl.lastIndexOf("/"));
+            String directory = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS).getPath();
+            file = new File(directory+fileName);
+            if(file.exists()){
+                downloadedLength = file.length();
+            }
+            long contentLength = getContentLength(downloadUrl);
+            if (contentLength == 0){
+                return TYPE_FAILED;
+            }else if(contentLength == downloadedLength){
+                return TYPE_SUCCESS;
+            }
+            OkHttpClient client = new OkHttpClient();
+            Request request = new Request.Builder()//请求中添加header 实现断点下载的需求
+                    .addHeader("RANGE","bytes="+downloadedLength+"-")
+                    .url(downloadUrl)
+                    .build();
+            Response response = client.newCall(request).execute();
+            if (response != null){
+                is = response.body().byteStream();
+                savedFile = new RandomAccessFile(file,"rw");
+                savedFile.seek(downloadedLength);
+                byte[] b = new byte[1024];
+                int total=0;
+                int len;
+                while ((len = is.read(b)) != -1){
+                    if (isCanceled){
+                        return TYPE_CANCELED;
+                    }else if (isPaused){
+                        return TYPE_PAUSED;
+                    }else {
+                        total += len;
+                        savedFile.write(b,0,len);
+                        int progress = (int) ((total + downloadedLength) *100 /contentLength);
+                        publishProgress(progress);
+                    }
+                }
+                response.body().close();
+                return TYPE_SUCCESS;
+            }
+        }catch (IOException e){
+            e.printStackTrace();
+        }finally {
+            try {
+                if (is != null){
+                    is.close();
+                }
+                if (savedFile != null){
+                    savedFile.close();
+                }
+                if (isCanceled && file != null){
+                    file.delete();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return TYPE_FAILED;
+    }
+
+    // 作用：在主线程 显示线程任务执行的进度
+    @Override
+    protected void onProgressUpdate(Integer...values){
+        int progress = values[0];
+        if (progress >lastProgress){
+            listener.onProgress(progress);
+            lastProgress = progress;
+        }
+    }
+
+    // 作用：接收线程任务执行结果、将执行结果显示到UI组件
+    // 注：必须复写，从而自定义UI操作
+    @Override
+    protected void onPostExecute(Integer status){
+        switch (status){
+            case TYPE_SUCCESS:
+                listener.onSuccess();
+                break;
+            case TYPE_PAUSED:
+                listener.onPaused();
+                break;
+            case TYPE_FAILED:
+                listener.onFailed();
+                break;
+            case TYPE_CANCELED:
+                listener.onCanceled();
+                break;
+            default:
+                break;
+        }
+    }
+
+    public void pauseDownload(){
+        isPaused = true;
+    }
+
+    public void cancelDownload(){
+        isCanceled = true;
+    }
+
+    private long getContentLength(String downloadUrl) throws IOException {
+        OkHttpClient client = new OkHttpClient();
+        Request request = new Request.Builder()
+                .url(downloadUrl)
+                .build();
+        Response response = client.newCall(request).execute();
+        if (response != null && response.isSuccessful()){
+            long contentLength = response.body().contentLength();
+            response.body().close();
+            return contentLength;
+        }
+        return 0;
+    }
+}
